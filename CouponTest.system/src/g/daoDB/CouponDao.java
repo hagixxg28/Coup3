@@ -23,6 +23,7 @@ import f.dao.ICouponDao;
 public class CouponDao implements ICouponDao {
 	private ConnectionPool pool = ConnectionPool.getPool();
 	private CustomerDao custDb = new CustomerDao();
+	private Extractor extractor = new Extractor();
 
 	public CouponDao() {
 		super();
@@ -86,8 +87,6 @@ public class CouponDao implements ICouponDao {
 		}
 	}
 
-	// NOTICE THAT YOU MIGHT NEED TO REMOVE START DATE, HOW CAN YOU UPDATE THAT
-	// SHIT?
 	@Override
 	public void updateCoupon(Coupon coup) throws DaoException {
 		String sql = "UPDATE coupon SET title=?, start_date=?, end_date=?, amount=?, type=?, message=?, price=?, image=? WHERE coup_id=?";
@@ -112,20 +111,12 @@ public class CouponDao implements ICouponDao {
 
 	@Override
 	public Coupon getCoupon(Coupon coup) throws DaoException {
-		Coupon otherCoup = new Coupon();
+		Coupon coupon = new Coupon();
 		String sql = "SELECT * FROM coupon WHERE coup_id=" + coup.getId();
 		Connection con = pool.getConnection();
-		try (PreparedStatement stmt = con.prepareStatement(sql); ResultSet rs = stmt.executeQuery();) {
-			while (rs.next()) {
-				otherCoup.setId(rs.getLong("coup_id"));
-				otherCoup.setTitle(rs.getString("title"));
-				otherCoup.setStartDate(rs.getDate("start_date"));
-				otherCoup.setEndDate(rs.getDate("end_date"));
-				otherCoup.setAmount(rs.getInt("amount"));
-				otherCoup.setType(CouponType.typeSort(rs.getString("type")));
-				otherCoup.setMessage(rs.getString("message"));
-				otherCoup.setPrice(rs.getDouble("price"));
-				otherCoup.setImage(rs.getString("image"));
+		try (PreparedStatement stmt = con.prepareStatement(sql); ResultSet resultSet = stmt.executeQuery();) {
+			while (resultSet.next()) {
+				coupon = extractor.extractCouponFromResultSet(resultSet);
 			}
 
 		} catch (SQLException e) {
@@ -133,7 +124,7 @@ public class CouponDao implements ICouponDao {
 		} finally {
 			pool.returnConnection(con);
 		}
-		return otherCoup;
+		return coupon;
 	}
 
 	@Override
@@ -141,12 +132,11 @@ public class CouponDao implements ICouponDao {
 		Collection<Coupon> collection = new ArrayList<Coupon>();
 		String sql = "SELECT * FROM coupon";
 		Connection con = pool.getConnection();
-		try (Statement stmt = con.createStatement(); ResultSet rs = stmt.executeQuery(sql);) {
-			while (rs.next()) {
-				Coupon coup = new Coupon(rs.getLong("coup_id"), rs.getString("title"), rs.getDate("start_date"),
-						rs.getDate("end_date"), rs.getInt("amount"), CouponType.typeSort(rs.getString("type")),
-						rs.getString("message"), rs.getDouble("price"), rs.getString("image"));
-				collection.add(coup);
+		try (Statement stmt = con.createStatement(); ResultSet resultSet = stmt.executeQuery(sql);) {
+			while (resultSet.next()) {
+				Coupon coupon = null;
+				coupon = extractor.extractCouponFromResultSet(resultSet);
+				collection.add(coupon);
 			}
 		} catch (SQLException e) {
 			throw new CouponDoesNotExistException("There are no coupons at the database");
@@ -167,10 +157,9 @@ public class CouponDao implements ICouponDao {
 		Connection con = pool.getConnection();
 		try (Statement stmt = con.createStatement(); ResultSet rs = stmt.executeQuery(sql);) {
 			while (rs.next()) {
-				Coupon coup = new Coupon(rs.getLong("coup_id"), rs.getString("title"), rs.getDate("start_date"),
-						rs.getDate("end_date"), rs.getInt("amount"), CouponType.typeSort(rs.getString("type")),
-						rs.getString("message"), rs.getDouble("price"), rs.getString("image"));
-				collection.add(coup);
+				Coupon coupon = null;
+				coupon = extractor.extractCouponFromResultSet(resultSet);
+				collection.add(coupon);
 			}
 		} catch (SQLException e) {
 			throw new CouponDoesNotExistException("There are no coupons with that type at the database");

@@ -15,11 +15,11 @@ import b.exceptions.DaoExceptions.NoCustomersException;
 import c.connectionPool.ConnectionPool;
 import d.beanShells.Coupon;
 import d.beanShells.Customer;
-import e.enums.CouponType;
 import f.dao.ICustomerDao;
 
 public class CustomerDao implements ICustomerDao {
 	private ConnectionPool pool = ConnectionPool.getPool();
+	private Extractor extractor = new Extractor();
 
 	public CustomerDao() {
 		super();
@@ -75,22 +75,20 @@ public class CustomerDao implements ICustomerDao {
 
 	@Override
 	public Customer getCustomer(Customer cust) throws DaoException {
-		Customer tempCust = new Customer();
+		Customer customer = new Customer();
 		String sql = String.format("SELECT * FROM customer WHERE cust_id=%d", cust.getId());
 		Connection con = pool.getConnection();
-		try (PreparedStatement stmt = con.prepareStatement(sql); ResultSet rs = stmt.executeQuery();) {
-			while (rs.next()) {
-				tempCust.setId(rs.getLong("cust_id"));
-				tempCust.setCustName(rs.getString("name"));
-				tempCust.setPassword(rs.getString("password"));
-				tempCust.setCoupons(getCoupons(cust));
+		try (PreparedStatement stmt = con.prepareStatement(sql); ResultSet resultSet = stmt.executeQuery();) {
+			while (resultSet.next()) {
+				customer = extractor.extractCustomerFromResultSet(resultSet);
+				customer.setCoupons(getCoupons(customer));
 			}
 		} catch (SQLException e) {
 			throw new CustomerDoesNotExistException("This customer does not exist");
 		} finally {
 			pool.returnConnection(con);
 		}
-		return tempCust;
+		return customer;
 
 	}
 
@@ -99,10 +97,11 @@ public class CustomerDao implements ICustomerDao {
 		Collection<Customer> collection = new ArrayList<Customer>();
 		String sql = "SELECT * FROM customer";
 		Connection con = pool.getConnection();
-		try (Statement stmt = con.createStatement(); ResultSet rs = stmt.executeQuery(sql);) {
-			while (rs.next()) {
-				Customer other = new Customer(rs.getLong("cust_id"), rs.getString("name"), rs.getString("password"));
-				collection.add(other);
+		try (Statement stmt = con.createStatement(); ResultSet resultSet = stmt.executeQuery(sql);) {
+			while (resultSet.next()) {
+				Customer customer = null;
+				customer = extractor.extractCustomerFromResultSet(resultSet);
+				collection.add(customer);
 			}
 		} catch (SQLException e) {
 			throw new NoCustomersException("There are no customers at the Database");
@@ -118,12 +117,13 @@ public class CustomerDao implements ICustomerDao {
 		Collection<Customer> collection = new ArrayList<Customer>();
 		String sql = "SELECT * FROM customer";
 		Connection con = pool.getConnection();
-		try (Statement stmt = con.createStatement(); ResultSet rs = stmt.executeQuery(sql);) {
-			while (rs.next()) {
-				Customer other = new Customer(rs.getLong("cust_id"), rs.getString("name"), rs.getString("password"));
-				other.setCoupons(getCoupons(other));
-				if (!other.getCoupons().isEmpty()) {
-					collection.add(other);
+		try (Statement stmt = con.createStatement(); ResultSet resultSet = stmt.executeQuery(sql);) {
+			while (resultSet.next()) {
+				Customer customer = null;
+				customer = extractor.extractCustomerFromResultSet(resultSet);
+				customer.setCoupons(getCoupons(customer));
+				if (!customer.getCoupons().isEmpty()) {
+					collection.add(customer);
 				}
 			}
 		} catch (SQLException e) {
@@ -137,11 +137,17 @@ public class CustomerDao implements ICustomerDao {
 
 	@Override
 	public Boolean login(Long id, String password) throws DaoException {
-		String sql = "SELECT password FROM customer WHERE cust_id=" + id;
-		Connection con = pool.getConnection();
-		try (Statement stmt = con.createStatement(); ResultSet rs = stmt.executeQuery(sql);) {
-			rs.next();
-			String str = rs.getString("password");
+		String sql = "SELECT password FROM customer WHERE cust_id=?";
+		Connection connection = null;
+		PreparedStatement preparedStatement = null;
+		ResultSet resultSet = null;
+		try {
+			connection = pool.getConnection();
+			preparedStatement = connection.prepareStatement(sql);
+			preparedStatement.setLong(1, id);
+			resultSet = preparedStatement.executeQuery();
+			resultSet.next();
+			String str = resultSet.getString("password");
 			if (password.equals(str)) {
 				return true;
 			} else {
@@ -150,7 +156,7 @@ public class CustomerDao implements ICustomerDao {
 		} catch (SQLException e) {
 			throw new CustomerDoesNotExistException("No customer with this id found");
 		} finally {
-			pool.returnConnection(con);
+			pool.returnConnection(connection);
 		}
 	}
 
@@ -158,35 +164,35 @@ public class CustomerDao implements ICustomerDao {
 	public Collection<Coupon> getCoupons(Customer cust) throws DaoException {
 		Collection<Coupon> collection = new ArrayList<Coupon>();
 		String sql = "SELECT customer_coupon.coup_id FROM customer_coupon INNER JOIN coupon"
-				+ " ON coupon.coup_id=customer_coupon.coup_id" + " WHERE cust_id=" + cust.getId();
-		Connection con = pool.getConnection();
-		try (Statement stmt = con.createStatement(); ResultSet rs = stmt.executeQuery(sql);) {
-			while (rs.next()) {
+				+ " ON coupon.coup_id=customer_coupon.coup_id" + " WHERE cust_id=?";
+		Connection connection = null;
+		PreparedStatement preparedStatement = null;
+		ResultSet resultSet = null;
+		try {
+			connection = pool.getConnection();
+			preparedStatement = connection.prepareStatement(sql);
+			preparedStatement.setLong(1, cust.getId());
+			resultSet = preparedStatement.executeQuery();
+			while (resultSet.next()) {
 				Coupon other = new Coupon();
-				other.setId(rs.getLong("coup_id"));
+				other.setId(resultSet.getLong("coup_id"));
 				collection.add(other);
 			}
+			String sql2 = "Select *  FROM coupon where coup_id=?";
 			for (Coupon coupon : collection) {
-				Long coup_id = coupon.getId();
-				String sql2 = "Select *  FROM coupon where coup_id=" + coup_id;
-				try (ResultSet rss = stmt.executeQuery(sql2);) {
-					while (rss.next()) {
-						coupon.setId(rss.getLong("coup_id"));
-						coupon.setTitle(rss.getString("title"));
-						coupon.setStartDate(rss.getDate("start_date"));
-						coupon.setEndDate(rss.getDate("end_date"));
-						coupon.setAmount(rss.getInt("amount"));
-						coupon.setType(CouponType.typeSort(rss.getString("type")));
-						coupon.setMessage(rss.getString("message"));
-						coupon.setPrice(rss.getDouble("price"));
-						coupon.setImage(rss.getString("image"));
+				try {
+					preparedStatement = connection.prepareStatement(sql2);
+					preparedStatement.setLong(1, coupon.getId());
+					resultSet = preparedStatement.executeQuery();
+					while (resultSet.next()) {
+						coupon = extractor.extractCouponFromResultSet(resultSet);
 					}
+				} finally {
+					pool.returnConnection(connection);
 				}
 			}
 		} catch (SQLException e) {
 			throw new CustomerDoesNotExistException("Couldn't find a customer with this coupon id");
-		} finally {
-			pool.returnConnection(con);
 		}
 		return collection;
 	}

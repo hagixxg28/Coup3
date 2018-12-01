@@ -13,11 +13,11 @@ import b.exceptions.DaoExceptions.DaoException;
 import c.connectionPool.ConnectionPool;
 import d.beanShells.Company;
 import d.beanShells.Coupon;
-import e.enums.CouponType;
 import f.dao.ICompanyDao;
 
 public class CompanyDao implements ICompanyDao {
 	private ConnectionPool pool = ConnectionPool.getPool();
+	private Extractor extractor = new Extractor();
 
 	public CompanyDao() {
 		super();
@@ -78,23 +78,26 @@ public class CompanyDao implements ICompanyDao {
 
 	@Override
 	public Company readCompany(Company comp) throws DaoException {
-		Company other = new Company();
-		String sql = "SELECT * FROM company WHERE comp_id=" + comp.getId();
-		Connection con = pool.getConnection();
-		try (Statement stmt = con.createStatement(); ResultSet rs = stmt.executeQuery(sql);) {
-			while (rs.next()) {
-				other.setId(rs.getLong("comp_id"));
-				other.setCompName(rs.getString("name"));
-				other.setPassword(rs.getString("password"));
-				other.setEmail(rs.getString("email"));
-				other.setCoupons(getAllCoupons(comp));
+		Connection connection = null;
+		PreparedStatement preparedStatement = null;
+		ResultSet resultSet = null;
+		Company company = null;
+		try {
+			connection = pool.getConnection();
+			String sql = "SELECT * FROM company WHERE comp_id = ? ";
+			preparedStatement = connection.prepareStatement(sql);
+			preparedStatement.setLong(1, comp.getId());
+			resultSet = preparedStatement.executeQuery();
+			if (!resultSet.next()) {
+				return null;
 			}
+			company = extractor.extractCompanyFromResultSet(resultSet);
 		} catch (SQLException e) {
 			throw new DaoException("No company was found");
 		} finally {
-			pool.returnConnection(con);
+			pool.returnConnection(connection);
 		}
-		return other;
+		return company;
 	}
 
 	@Override
@@ -102,16 +105,12 @@ public class CompanyDao implements ICompanyDao {
 		Collection<Company> collection = new ArrayList<Company>();
 		String sql = "SELECT * FROM company";
 		Connection con = pool.getConnection();
-		try (Statement stmt = con.createStatement(); ResultSet rs = stmt.executeQuery(sql);) {
-			while (rs.next()) {
-				Company other = new Company(rs.getLong("comp_id"), rs.getString("name"), rs.getString("password"),
-						rs.getString("email"));
+		try (Statement stmt = con.createStatement(); ResultSet resultSet = stmt.executeQuery(sql);) {
+			while (resultSet.next()) {
+				Company other = null;
+				other = extractor.extractCompanyFromResultSet(resultSet);
 				collection.add(other);
 			}
-			for (Company company : collection) {
-				company.setCoupons(getAllCoupons(company));
-			}
-
 		} catch (SQLException e) {
 			throw new DaoException("There are no companies");
 		} finally {
@@ -122,14 +121,20 @@ public class CompanyDao implements ICompanyDao {
 
 	@Override
 	public Boolean login(Long id, String password) throws DaoException {
-		String sql = "SELECT password FROM company WHERE comp_id=" + id;
-		Connection con = pool.getConnection();
-		try (Statement stmt = con.createStatement(); ResultSet rs = stmt.executeQuery(sql);) {
-			if (!rs.next()) {
+		String sql = "SELECT password FROM company WHERE comp_id=?";
+		Connection connection = null;
+		PreparedStatement preparedStatement = null;
+		ResultSet resultSet = null;
+		try {
+			connection = pool.getConnection();
+			preparedStatement = connection.prepareStatement(sql);
+			preparedStatement.setLong(1, id);
+			resultSet = preparedStatement.executeQuery();
+			if (!resultSet.next()) {
 				System.out.println("Wrong pass");
 				return false;
 			}
-			String str = rs.getString("password");
+			String str = resultSet.getString("password");
 			if (password.equals(str)) {
 				return true;
 			} else {
@@ -139,7 +144,7 @@ public class CompanyDao implements ICompanyDao {
 		} catch (SQLException e) {
 			throw new DaoException("Unable to login-Wrong password or Id");
 		} finally {
-			pool.returnConnection(con);
+			pool.returnConnection(connection);
 		}
 	}
 
@@ -147,46 +152,57 @@ public class CompanyDao implements ICompanyDao {
 	public Collection<Coupon> getAllCoupons(Company comp) throws DaoException {
 		Collection<Coupon> collection = new ArrayList<Coupon>();
 		String sql = "SELECT company_coupon.coup_id FROM company_coupon INNER JOIN coupon"
-				+ " ON coupon.coup_id=company_coupon.coup_id" + " WHERE comp_id=" + comp.getId();
-		Connection con = pool.getConnection();
-		try (Statement stmt = con.createStatement(); ResultSet rs = stmt.executeQuery(sql);) {
-			while (rs.next()) {
+				+ " ON coupon.coup_id=company_coupon.coup_id" + " WHERE comp_id=?";
+		Connection connection = null;
+		PreparedStatement preparedStatement = null;
+		ResultSet resultSet = null;
+		try {
+			connection = pool.getConnection();
+			preparedStatement = connection.prepareStatement(sql);
+			preparedStatement.setLong(1, comp.getId());
+			resultSet = preparedStatement.executeQuery();
+			while (resultSet.next()) {
 				Coupon other = new Coupon();
-				other.setId(rs.getLong("coup_id"));
+				other.setId(resultSet.getLong("coup_id"));
 				collection.add(other);
-			}
-			for (Coupon coupon : collection) {
-				String sql2 = "Select *  FROM coupon where coup_id=" + coupon.getId();
-				try (ResultSet rss = stmt.executeQuery(sql2);) {
-					while (rss.next()) {
-						coupon.setId(rss.getLong("coup_id"));
-						coupon.setTitle(rss.getString("title"));
-						coupon.setStartDate(rss.getDate("start_date"));
-						coupon.setEndDate(rss.getDate("end_date"));
-						coupon.setAmount(rss.getInt("amount"));
-						coupon.setType(CouponType.typeSort(rss.getString("type")));
-						coupon.setMessage(rss.getString("message"));
-						coupon.setPrice(rss.getDouble("price"));
-						coupon.setImage(rss.getString("image"));
-					}
-				}
 			}
 		} catch (SQLException e) {
 			throw new DaoException("No coupons were found under this company");
-		} finally {
-			pool.returnConnection(con);
+		}
+		String sql2 = "Select *  FROM coupon where coup_id=?";
+		for (Coupon coupon : collection) {
+			try {
+				preparedStatement = connection.prepareStatement(sql2);
+				preparedStatement.setLong(1, coupon.getId());
+				resultSet = preparedStatement.executeQuery();
+				while (resultSet.next()) {
+					coupon = extractor.extractCouponFromResultSet(resultSet);
+				}
+
+			} catch (SQLException e) {
+				throw new DaoException("No coupons were found under this company");
+			} finally {
+				pool.returnConnection(connection);
+			}
 		}
 		return collection;
 	}
 
+	@Override
 	public Boolean companyExists(Company comp) throws DaoException {
 		ArrayList<Long> list = new ArrayList<>();
-		String sql = "SELECT comp_id FROM company WHERE comp_id=" + comp.getId();
-		Connection con = pool.getConnection();
-		try (Statement stmt = con.createStatement(); ResultSet rs = stmt.executeQuery(sql);) {
-
-			while (rs.next()) {
-				list.add((rs.getLong("comp_id")));
+		String sql = "SELECT comp_id FROM company WHERE comp_id=?";
+		Connection connection = null;
+		PreparedStatement preparedStatement = null;
+		ResultSet resultSet = null;
+		Company company = null;
+		try {
+			connection = pool.getConnection();
+			preparedStatement = connection.prepareStatement(sql);
+			preparedStatement.setLong(1, comp.getId());
+			resultSet = preparedStatement.executeQuery();
+			while (resultSet.next()) {
+				list.add((resultSet.getLong("comp_id")));
 			}
 			for (Long long1 : list) {
 				if (comp.getId() == long1) {
@@ -197,7 +213,7 @@ public class CompanyDao implements ICompanyDao {
 		} catch (SQLException e) {
 			throw new DaoException("Error occurred at companyExists method");
 		} finally {
-			pool.returnConnection(con);
+			pool.returnConnection(connection);
 		}
 		return false;
 	}
